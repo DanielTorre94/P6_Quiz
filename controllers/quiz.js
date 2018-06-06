@@ -1,17 +1,18 @@
 const Sequelize = require("sequelize");
 const Op = Sequelize.Op;
 const {models} = require("../models");
-
 const paginate = require('../helpers/paginate').paginate;
 
 // Autoload the quiz with id equals to :quizId
 exports.load = (req, res, next, quizId) => {
 
+
     models.quiz.findById(quizId, {
         include: [
-            models.tip,
-            {model: models.user, as: 'author'}
-        ]
+            {model: models.user, as: 'author'},
+            {model: models.tip, 
+            	include: [{model: models.user, as: 'author'}]}
+        ]        
     })
     .then(quiz => {
         if (quiz) {
@@ -42,6 +43,7 @@ exports.adminOrAuthorRequired = (req, res, next) => {
 
 // GET /quizzes
 exports.index = (req, res, next) => {
+
 
     let countOptions = {
         where: {}
@@ -78,7 +80,7 @@ exports.index = (req, res, next) => {
         res.locals.paginate_control = paginate(count, items_per_page, pageno, req.url);
 
         const findOptions = {
-            ...countOptions,
+            countOptions,
             offset: items_per_page * (pageno - 1),
             limit: items_per_page,
             include: [{model: models.user, as: 'author'}]
@@ -122,7 +124,9 @@ exports.create = (req, res, next) => {
 
     const {question, answer} = req.body;
 
+
     const authorId = req.session.user && req.session.user.id || 0;
+
 
     const quiz = models.quiz.build({
         question,
@@ -224,4 +228,62 @@ exports.check = (req, res, next) => {
         result,
         answer
     });
+};
+
+//GET /quizzes/randomplay
+exports.randomplay = (req, res, next) => {
+
+    if(req.session.randomplay===undefined) //|| nuevo === 1)         //array de IDs
+        req.session.randomplay=[];
+    //nuevo = 0;
+    
+    var condition1 = {"id": {[Sequelize.Op.notIn]: req.session.randomplay}};        //excluyo los ID que ya respondi
+
+    return models.quiz.count({where: condition1})
+    .then(rest => {
+        
+        if(rest === 0){
+            var puntuacion = req.session.randomplay.length;  
+            req.session.randomplay = [];        //elimino la sesion
+            //nuevo = 1;
+            res.render('quizzes/random_nomore', {score: puntuacion});   //renderizo pantalla final con puntuacion
+        }
+        randomId = Math.floor(Math.random() * rest);        //ID aleatoria
+        return models.quiz.findAll({where: condition1, limit:1, offset: randomId})    //limito busqueda a
+                                                                                                //quiz que no he respondido
+                                                                                                //ID igual al random
+                                                                                                //limito a coger solo 1 quiz
+        .then(quiz => {
+            return quiz[0];                
+        })
+    })
+    .then(quiz1 => {
+        var puntuacion = req.session.randomplay.length;
+        res.render('quizzes/random_play', {quiz: quiz1, score: puntuacion});    //renderizo pantalla juego con pregunta aleatoria
+    })
+    .catch(err => {
+        console.log(err);
+    })
+
+};
+
+//GET /quizzes/randomcheck           
+exports.randomcheck = (req, res, next) => {  
+
+    const {quiz, query} = req;
+
+    const answer = query.answer || "";
+    const result = answer.toLowerCase().trim() === quiz.answer.toLowerCase().trim();
+    const quizId = quiz.id;
+
+    if(result){     //si es correcto, guardo el ID acertado en session, incremento puntuacion y renderizo pantalla de resultado
+        req.session.randomplay.push(quizId);
+        var puntuacion = req.session.randomplay.length;
+        res.render('quizzes/random_result', {score: puntuacion, answer, result});
+    }
+    else{       //si no es correcto, compruebo la puntuacion actual y renderizo la pantalla de resultado
+        var puntuacion = req.session.randomplay.length;
+        //nuevo = 1;
+        res.render('quizzes/random_result', {score: puntuacion, answer, result})
+    }
 };
